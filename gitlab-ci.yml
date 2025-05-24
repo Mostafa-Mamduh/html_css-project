@@ -1,0 +1,64 @@
+
+include: 
+#  - template: Security/SAST.gitlab-ci.yml
+# - template: Security/Secret-Detection.gitlab-ci.yml
+# - template: Jobs/Code-Quality.gitlab-ci.yml >> available only in EE
+  - template: Security/Container-Scanning.gitlab-ci.yml
+
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+stages:
+  - build-image
+  - scan
+  - deploy
+
+
+
+build-image:
+  tags: 
+    - test
+  stage: build-image
+  image: docker:20.10
+  services:
+    - docker:dind
+  before_script:
+    - docker info
+    # login to docker hub
+    - echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+
+  script: |
+    # build the image
+    docker build -t gamal97/web:2.0 .
+
+    # push the image
+    docker push gamal97/web:2.0
+
+container_scanning: 
+  stage: scan
+  artifacts:
+    reports:
+      sast: gl-container-scanning-report.json
+    paths:
+    - 'gl-container-scanning-report.json'
+  services:
+  - name: docker:dind
+    alias: docker
+  variables:
+    GIT_STRATEGY: fetch
+    CS_DISABLE_DEPENDENCY_LIST: "true"
+    SECURE_LOG_LEVEL: 'info'
+    CS_SEVERITY_THRESHOLD: 'UNKNOWN'
+    CS_IMAGE: gamal97/web:2.0
+
+
+deploy:
+  image: bitnami/kubectl:1.33.1
+
+  stage: deploy
+
+  script: |
+    kubectl rollout restart deployment my-nginx
+    kubectl apply -f Deployment.yaml
